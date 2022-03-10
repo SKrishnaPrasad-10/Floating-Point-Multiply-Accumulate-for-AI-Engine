@@ -1,0 +1,32 @@
+module SRAM( dataIn, dataOut, Addr, CS, WE, OE);
+
+/* parameters for the width 
+
+parameter ADR   = 3;
+parameter DAT   = 16;
+parameter DPTH  = 16;*/
+
+input   [15:0]  dataIn;
+output reg [15:0]  dataOut;
+input   [2:0]  Addr;
+input CS, WE, OE;
+
+//internal variables
+reg [15:0] SRAM [15:0];
+
+always @ (Addr)
+	begin
+	 if (CS == 1'b1) begin
+	  if (WE == 1'b1 && OE == 1'b0) begin
+	   SRAM [Addr] = dataIn;
+	  end
+
+  else if (OE == 1'b1 && WE == 1'b0) begin
+   dataOut = SRAM [Addr]; 
+  end
+  else;
+ end
+ else;
+end
+
+endmodule

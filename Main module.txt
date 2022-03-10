@@ -1,0 +1,607 @@
+
+module FloatingPointMAC(
+input Reset,
+input Clock, 
+input [3:0] RowIn, 
+output [3:0] ColOut,  
+output reg [3:0] seg, 
+output reg KeyRdy, 
+input KeyRd,
+output reg [7:0] disp0,disp1,disp2,disp3,
+output reg [8:0] led,
+output reg [3:0] lcdout,
+input nxtstbutton
+);
+
+
+parameter Scan=4'b0000, CalculateKeypad=4'b0001, Analyze=4'b0010, WaitForRead=4'b0011; 
+parameter WaitForButton=4'b0100,Multiply_Init=4'b0101,Multiply=4'b0110,Add=4'b0111,Acc=4'b1000,display=4'b1001;
+parameter no_of_inputs = 4'd2;
+reg [3:0]input_count;
+reg showoutput;
+reg [3:0] State;
+reg [15:0] Data;
+reg [3:0] Col;
+reg [3:0] Sum;
+reg waitbit;
+reg [2:0] counter;
+reg [3:0]in1count,in2count;
+reg [1:0]inputno;
+reg [2:0] index;
+reg [15:0]data_reg;
+reg [15:0]weight_reg;
+assign ColOut[0] = Col[0] ? 1'bz : 1'b0; 
+assign ColOut[1] = Col[1] ? 1'bz : 1'b0; 
+assign ColOut[2] = Col[2] ? 1'bz : 1'b0; 
+assign ColOut[3] = Col[3] ? 1'bz : 1'b0;
+reg [31:0] clkcnt;
+reg clk_out; 
+reg Cs_a,Cs_b;
+reg We_a,We_b;
+reg Oe_a,Oe_b;
+reg[2:0] Addr_a,Addr_b;
+wire [15:0]  dataOut_a,dataOut_b;
+reg [3:0] Ard_in;
+reg[15:0] inp1,display_input;
+reg[15:0] inp2,add1,add2,acc;
+wire[15:0] out,out2;
+wire underflow,done;
+wire overflow;
+wire [15:0] add_out;
+wire [7:0] d0,d1,d2,d3;
+wire [5:0]E;
+wire [10:0] M;
+reg [15:0] dataIn_a,dataIn_b;
+reg [15:0] multi_outq,add_outq;
+
+SRAM SRAMA( dataIn_a, dataOut_a, Addr_a, Cs_a, We_a, Oe_a);
+SRAM SRAMB( dataIn_b, dataOut_b, Addr_b, Cs_b, We_b, Oe_b);
+multiplier M1(inp1,inp2,out,M,E,overflow,underflow,done);
+addercombi A(add1,add2,add_out);
+segdisplay SD(display_input,d0,d1,d2,d3);
+
+//divide clock
+always @(posedge Clock) begin
+	if (clkcnt==2500000)
+		begin	
+		clkcnt<=1;
+		clk_out<=~clk_out;
+		end
+	else  clkcnt<=clkcnt+1;
+	end
+	
+	initial
+	begin
+		State <= Scan;
+		Col <= 4'b0111;
+		seg <= 4'b1101;
+		Data <= 16'hFFFF;
+		Sum <= 0;
+		waitbit <= 0;
+		disp0<=8'hFF;
+		disp1<=8'hFF;
+		disp2<=8'hFF;
+		disp3<=8'hFF;
+		inputno<=2'd0;
+		lcdout<=4'd0;
+		counter<=3'd0;
+		in1count<=4'd0;
+		in2count<=4'd0;
+		led<=9'b000000000;
+		showoutput<=0;
+		input_count<=0;
+		Cs_a  <= 1'b0;
+		We_a  <= 1'b1;
+      Oe_a  <= 1'b0;
+		Cs_b  <= 1'b0;
+		We_b  <= 1'b1;
+      Oe_b  <= 1'b0;
+		acc <= 16'd0;
+		Addr_a<=3'd0;
+		Addr_b<=3'd0;
+	end
+
+	
+	 
+  
+always @(posedge clk_out,negedge Reset, negedge nxtstbutton) begin
+	if (Reset == 1'b0) begin
+		State <= Scan;
+		Col <= 4'b0111;
+		Data <= 16'hFFFF;
+		Sum <= 0;
+		waitbit <= 0;
+		disp0<=8'hFF;
+		disp1<=8'hFF;
+		disp2<=8'hFF;
+		disp3<=8'hFF;
+		lcdout<=4'd0;
+		counter<=3'd0;
+		in1count<=4'd0;
+		in2count<=4'd0;
+		inputno<=2'd0;
+		led<=9'b000000000;
+		showoutput<=0;
+		data_reg<=16'd0;
+		weight_reg<=16'd0;
+		input_count<=0;
+		Cs_a  <= 1'b1;
+		We_a  <= 1'b1;
+      Oe_a  <= 1'b0;
+		Cs_b  <= 1'b1;
+		We_b  <= 1'b1;
+      Oe_b  <= 1'b0;
+		acc <= 16'd0;
+		Addr_a<=3'd0;
+		Addr_b<=3'd0;
+	end
+	else if(nxtstbutton==1'b0)begin
+					counter<=4'd0;
+					disp0 <= 8'hFF;
+					disp1 <= 8'hFF;
+					disp2 <= 8'hFF;
+					disp3 <= 8'hFF;
+						if(inputno==2'd1)begin
+						State <= Scan;
+						counter<= 3'd0;
+						end
+						else if (inputno==2'd2)begin
+						lcdout<=4'd3;
+						State <= Multiply_Init;
+						//led<=9'b01110000;
+						end
+			end
+	else begin
+
+		case(State)
+			Scan: begin
+					led<=9'b00000000;
+					case(Col)
+						4'b0111: begin 
+							if(waitbit == 1) begin
+								Data[15:12] <= RowIn;
+								Col <= 4'b1011;
+								waitbit <= 0;
+							end
+							else waitbit <= 1;
+						end
+						4'b1011: begin
+							if(waitbit == 1) begin
+								Data[11:8] <= RowIn;
+								Col <= 4'b1101;
+								waitbit <= 0;
+							end
+							else waitbit <= 1;
+						end
+						4'b1101: begin
+							if(waitbit == 1) begin
+								Data[7:4] <= RowIn;
+								Col <= 4'b1110;
+								waitbit <= 0;
+							end
+							else waitbit <= 1;
+						end
+						4'b1110: begin
+							if(waitbit == 1) begin
+								Data[3:0] <= RowIn;
+								Col <= 4'b0111;
+								State <= CalculateKeypad;	
+								waitbit <= 0;
+							end
+							else waitbit <= 1;
+						end
+						default: begin
+							Col <= 4'b1110;
+						end
+					endcase
+					led<=9'b00000001;
+			end
+			CalculateKeypad: begin
+				Sum <= ~Data[0] + ~Data[1] + ~Data[2] + ~Data[3]
+					 + ~Data[4] + ~Data[5] + ~Data[6] + ~Data[7]
+					 + ~Data[8] + ~Data[9] + ~Data[10] + ~Data[11]
+					 + ~Data[12] + ~Data[13] + ~Data[14] + ~Data[15]; 
+				State <= Analyze;
+			end
+			Analyze: begin
+					led<=9'b00000010;
+					if(Sum == 4'b0001) begin
+					led<=9'b00000100;
+					counter=counter+3'd1;
+						if(counter==1)
+						begin
+						disp3<=8'hFF;
+						disp2<=8'hFF;
+						disp1<=8'hFF;
+						disp0<=8'hFF;
+						end
+						if(inputno==0) begin
+							lcdout<=4'd2;
+							case(Data)
+								16'hFFFE : begin 
+											  case(counter)
+											  4'b0001 : begin disp3 <= 8'hF9; data_reg[15:12] <= 4'h1;end
+											  4'b0010 : begin disp2 <= 8'hF9; data_reg[11:8] <= 4'h1;end
+											  4'b0011 : begin disp1 <= 8'hF9; data_reg[7:4] <= 4'h1;end
+											  4'b0100 : begin disp0 <= 8'hF9; data_reg[3:0]<= 4'h1;end
+											  endcase
+											  end
+								16'hFFFD : begin
+											  case(counter)
+											  4'b0001 : begin disp3 <= 8'h99; data_reg[15:12] <= 4'h4;end
+											  4'b0010 : begin disp2 <= 8'h99; data_reg[11:8] <= 4'h4;end
+											  4'b0011 : begin disp1 <= 8'h99; data_reg[7:4] <= 4'h4;end
+											  4'b0100 : begin disp0 <= 8'h99; data_reg[3:0] <= 4'h4;end
+											  endcase
+											  end
+								16'hFFFB : begin 
+											  case(counter)
+											  4'b0001 : begin disp3 <= 8'hF8; data_reg[15:12] <= 4'h7;end
+											  4'b0010 : begin disp2 <= 8'hF8; data_reg[11:8] <= 4'h7;end
+											  4'b0011 : begin disp1 <= 8'hF8; data_reg[7:4] <= 4'h7;end
+											  4'b0100 : begin disp0 <= 8'hF8; data_reg[3:0] <= 4'h7;end
+											  endcase
+											  end
+								16'hFFF7 : begin 
+											  case(counter)
+											  4'b0001 : begin disp3 <= 8'h8E; data_reg[15:12] <= 4'hF;end
+											  4'b0010 : begin disp2 <= 8'h8E; data_reg[11:8] <= 4'hF;end
+											  4'b0011 : begin disp1 <= 8'h8E; data_reg[7:4] <= 4'hF;end
+											  4'b0100 : begin disp0 <= 8'h8E; data_reg[3:0] <= 4'hF;end
+											  endcase
+											  end
+								16'hFFEF : begin 
+											  case(counter)
+											  4'b0001 : begin disp3 <= 8'hA4; data_reg[15:12] <= 4'h2;end
+											  4'b0010 : begin disp2 <= 8'hA4; data_reg[11:8] <= 4'h2;end
+											  4'b0011 : begin disp1 <= 8'hA4; data_reg[7:4] <= 4'h2;end
+											  4'b0100 : begin disp0 <= 8'hA4; data_reg[3:0] <= 4'h2;end
+											  endcase
+											  end
+								16'hFFDF : begin 
+											  case(counter)
+											  4'b0001 : begin disp3 <= 8'h92; data_reg[15:12] <= 4'h5;end
+											  4'b0010 : begin disp2 <= 8'h92; data_reg[11:8] <= 4'h5;end
+											  4'b0011 : begin disp1 <= 8'h92; data_reg[7:4] <= 4'h5;end
+											  4'b0100 : begin disp0 <= 8'h92; data_reg[3:0] <= 4'h5;end
+											  endcase
+											  end
+								16'hFFBF : begin 
+											  case(counter)
+											  4'b0001 : begin disp3 <= 8'h80; data_reg[15:12] <= 4'h8;end
+											  4'b0010 : begin disp2 <= 8'h80; data_reg[11:8] <= 4'h8;end
+											  4'b0011 : begin disp1 <= 8'h80; data_reg[7:4] <= 4'h8;end
+											  4'b0100 : begin disp0 <= 8'h80; data_reg[3:0] <= 4'h8;end
+											  endcase
+											  end
+								16'hFF7F : begin 
+											  case(counter)
+											  4'b0001 : begin disp3 <= 8'hC0; data_reg[15:12] <= 4'h0;end
+											  4'b0010 : begin disp2 <= 8'hC0; data_reg[11:8] <= 4'h0;end
+											  4'b0011 : begin disp1 <= 8'hC0; data_reg[7:4] <= 4'h0;end
+											  4'b0100 : begin disp0 <= 8'hC0; data_reg[3:0] <= 4'h0;end
+											  endcase
+											  end
+								16'hFEFF : begin 
+											  case(counter)
+											  4'b0001 : begin disp3 <= 8'hB0; data_reg[15:12] <= 4'h3;end
+											  4'b0010 : begin disp2 <= 8'hB0; data_reg[11:8] <= 4'h3;end
+											  4'b0011 : begin disp1 <= 8'hB0; data_reg[7:4] <= 4'h3;end
+											  4'b0100 : begin disp0 <= 8'hB0; data_reg[3:0] <= 4'h3;end
+											  endcase
+											  end
+								16'hFDFF : begin 
+											  case(counter)
+											  4'b0001 : begin disp3 <= 8'h82; data_reg[15:12] <= 4'h6;end
+											  4'b0010 : begin disp2 <= 8'h82; data_reg[11:8] <= 4'h6;end
+											  4'b0011 : begin disp1 <= 8'h82; data_reg[7:4] <= 4'h6;end
+											  4'b0100 : begin disp0 <= 8'h82; data_reg[3:0] <= 4'h6;end
+											  endcase
+											  end
+								16'hFBFF : begin 
+											  case(counter)
+											  4'b0001 : begin disp3 <= 8'h90; data_reg[15:12] <= 4'h9;end
+											  4'b0010 : begin disp2 <= 8'h90; data_reg[11:8] <= 4'h9;end
+											  4'b0011 : begin disp1 <= 8'h90; data_reg[7:4] <= 4'h9;end
+											  4'b0100 : begin disp0 <= 8'h90; data_reg[3:0] <= 4'h9;end
+											  endcase
+											  end
+								16'hF7FF : begin 
+											  case(counter)
+											  4'b0001 : begin disp3 <= 8'h86; data_reg[15:12] <= 4'hE;end
+											  4'b0010 : begin disp2 <= 8'h86; data_reg[11:8] <= 4'hE;end
+											  4'b0011 : begin disp1 <= 8'h86; data_reg[7:4] <= 4'hE;end
+											  4'b0100 : begin disp0 <= 8'h86; data_reg[3:0] <= 4'hE;end
+											  endcase
+											  end
+								16'hEFFF : begin 
+											  case(counter)
+											  4'b0001 : begin disp3 <= 8'h88; data_reg[15:12] <= 4'hA;end
+											  4'b0010 : begin disp2 <= 8'h88; data_reg[11:8] <= 4'hA;end
+											  4'b0011 : begin disp1 <= 8'h88; data_reg[7:4] <= 4'hA;end
+											  4'b0100 : begin disp0 <= 8'h88; data_reg[3:0] <= 4'hA;end
+											  endcase
+											  end
+								16'hDFFF : begin 
+											  case(counter)
+											  4'b0001 : begin disp3 <= 8'h83; data_reg[15:12] <= 4'hB;end
+											  4'b0010 : begin disp2 <= 8'h83; data_reg[11:8] <= 4'hB;end
+											  4'b0011 : begin disp1 <= 8'h83; data_reg[7:4] <= 4'hB;end
+											  4'b0100 : begin disp0 <= 8'h83; data_reg[3:0] <= 4'hB;end
+											  endcase
+											  end
+								16'hBFFF : begin 
+											  case(counter)
+											  4'b0001 : begin disp3 <= 8'hC6; data_reg[15:12] <= 4'hC;end
+											  4'b0010 : begin disp2 <= 8'hC6; data_reg[11:8] <= 4'hC;end
+											  4'b0011 : begin disp1 <= 8'hC6; data_reg[7:4] <= 4'hC;end
+											  4'b0100 : begin disp0 <= 8'hC6; data_reg[3:0] <= 4'hC;end
+											  endcase
+											  end
+								16'h7FFF : begin 
+											  case(counter)
+											  4'b0001 : begin disp3 <= 8'hA1; data_reg[15:12] <= 4'hD;end
+											  4'b0010 : begin disp2 <= 8'hA1; data_reg[11:8] <= 4'hD;end
+											  4'b0011 : begin disp1 <= 8'hA1; data_reg[7:4] <= 4'hD;end
+											  4'b0100 : begin disp0 <= 8'hA1; data_reg[3:0] <= 4'hD;end
+											  endcase
+											  end
+							   default  : disp0 <= 8'h00; 
+							endcase
+							end
+							else begin
+								lcdout<=4'd1;
+								case(Data)
+								16'hFFFE : begin 
+											  case(counter)
+											  4'b0001 : begin disp3 <= 8'hF9; weight_reg[15:12] <= 4'h1;end
+											  4'b0010 : begin disp2 <= 8'hF9; weight_reg[11:8] <= 4'h1;end
+											  4'b0011 : begin disp1 <= 8'hF9; weight_reg[7:4] <= 4'h1;end
+											  4'b0100 : begin disp0 <= 8'hF9; weight_reg[3:0]<= 4'h1;end
+											  endcase
+											  end
+								16'hFFFD : begin
+											  case(counter)
+											  4'b0001 : begin disp3 <= 8'h99; weight_reg[15:12] <= 4'h4;end
+											  4'b0010 : begin disp2 <= 8'h99; weight_reg[11:8] <= 4'h4;end
+											  4'b0011 : begin disp1 <= 8'h99; weight_reg[7:4] <= 4'h4;end
+											  4'b0100 : begin disp0 <= 8'h99; weight_reg[3:0] <= 4'h4;end
+											  endcase
+											  end
+								16'hFFFB : begin 
+											  case(counter)
+											  4'b0001 : begin disp3 <= 8'hF8; weight_reg[15:12] <= 4'h7;end
+											  4'b0010 : begin disp2 <= 8'hF8; weight_reg[11:8] <= 4'h7;end
+											  4'b0011 : begin disp1 <= 8'hF8; weight_reg[7:4] <= 4'h7;end
+											  4'b0100 : begin disp0 <= 8'hF8; weight_reg[3:0] <= 4'h7;end
+											  endcase
+											  end
+								16'hFFF7 : begin 
+											  case(counter)
+											  4'b0001 : begin disp3 <= 8'h8E; weight_reg[15:12] <= 4'hF;end
+											  4'b0010 : begin disp2 <= 8'h8E; weight_reg[11:8] <= 4'hF;end
+											  4'b0011 : begin disp1 <= 8'h8E; weight_reg[7:4] <= 4'hF;end
+											  4'b0100 : begin disp0 <= 8'h8E; weight_reg[3:0] <= 4'hF;end
+											  endcase
+											  end
+								16'hFFEF : begin 
+											  case(counter)
+											  4'b0001 : begin disp3 <= 8'hA4; weight_reg[15:12] <= 4'h2;end
+											  4'b0010 : begin disp2 <= 8'hA4; weight_reg[11:8] <= 4'h2;end
+											  4'b0011 : begin disp1 <= 8'hA4; weight_reg[7:4] <= 4'h2;end
+											  4'b0100 : begin disp0 <= 8'hA4; weight_reg[3:0] <= 4'h2;end
+											  endcase
+											  end
+								16'hFFDF : begin 
+											  case(counter)
+											  4'b0001 : begin disp3 <= 8'h92; weight_reg[15:12] <= 4'h5;end
+											  4'b0010 : begin disp2 <= 8'h92; weight_reg[11:8] <= 4'h5;end
+											  4'b0011 : begin disp1 <= 8'h92; weight_reg[7:4] <= 4'h5;end
+											  4'b0100 : begin disp0 <= 8'h92; weight_reg[3:0] <= 4'h5;end
+											  endcase
+											  end
+								16'hFFBF : begin 
+											  case(counter)
+											  4'b0001 : begin disp3 <= 8'h80; weight_reg[15:12] <= 4'h8;end
+											  4'b0010 : begin disp2 <= 8'h80; weight_reg[11:8] <= 4'h8;end
+											  4'b0011 : begin disp1 <= 8'h80; weight_reg[7:4] <= 4'h8;end
+											  4'b0100 : begin disp0 <= 8'h80; weight_reg[3:0] <= 4'h8;end
+											  endcase
+											  end
+								16'hFF7F : begin 
+											  case(counter)
+											  4'b0001 : begin disp3 <= 8'hC0; weight_reg[15:12] <= 4'h0;end
+											  4'b0010 : begin disp2 <= 8'hC0; weight_reg[11:8] <= 4'h0;end
+											  4'b0011 : begin disp1 <= 8'hC0; weight_reg[7:4] <= 4'h0;end
+											  4'b0100 : begin disp0 <= 8'hC0; weight_reg[3:0] <= 4'h0;end
+											  endcase
+											  end
+								16'hFEFF : begin 
+											  case(counter)
+											  4'b0001 : begin disp3 <= 8'hB0; weight_reg[15:12] <= 4'h3;end
+											  4'b0010 : begin disp2 <= 8'hB0; weight_reg[11:8] <= 4'h3;end
+											  4'b0011 : begin disp1 <= 8'hB0; weight_reg[7:4] <= 4'h3;end
+											  4'b0100 : begin disp0 <= 8'hB0; weight_reg[3:0] <= 4'h3;end
+											  endcase
+											  end
+								16'hFDFF : begin 
+											  case(counter)
+											  4'b0001 : begin disp3 <= 8'h82; weight_reg[15:12] <= 4'h6;end
+											  4'b0010 : begin disp2 <= 8'h82; weight_reg[11:8] <= 4'h6;end
+											  4'b0011 : begin disp1 <= 8'h82; weight_reg[7:4] <= 4'h6;end
+											  4'b0100 : begin disp0 <= 8'h82; weight_reg[3:0] <= 4'h6;end
+											  endcase
+											  end
+								16'hFBFF : begin 
+											  case(counter)
+											  4'b0001 : begin disp3 <= 8'h90; weight_reg[15:12] <= 4'h9;end
+											  4'b0010 : begin disp2 <= 8'h90; weight_reg[11:8] <= 4'h9;end
+											  4'b0011 : begin disp1 <= 8'h90; weight_reg[7:4] <= 4'h9;end
+											  4'b0100 : begin disp0 <= 8'h90; weight_reg[3:0] <= 4'h9;end
+											  endcase
+											  end
+								16'hF7FF : begin 
+											  case(counter)
+											  4'b0001 : begin disp3 <= 8'h86; weight_reg[15:12] <= 4'hE;end
+											  4'b0010 : begin disp2 <= 8'h86; weight_reg[11:8] <= 4'hE;end
+											  4'b0011 : begin disp1 <= 8'h86; weight_reg[7:4] <= 4'hE;end
+											  4'b0100 : begin disp0 <= 8'h86; weight_reg[3:0] <= 4'hE;end
+											  endcase
+											  end
+								16'hEFFF : begin 
+											  case(counter)
+											  4'b0001 : begin disp3 <= 8'h88; weight_reg[15:12] <= 4'hA;end
+											  4'b0010 : begin disp2 <= 8'h88; weight_reg[11:8] <= 4'hA;end
+											  4'b0011 : begin disp1 <= 8'h88; weight_reg[7:4] <= 4'hA;end
+											  4'b0100 : begin disp0 <= 8'h88; weight_reg[3:0] <= 4'hA;end
+											  endcase
+											  end
+								16'hDFFF : begin 
+											  case(counter)
+											  4'b0001 : begin disp3 <= 8'h83; weight_reg[15:12] <= 4'hB;end
+											  4'b0010 : begin disp2 <= 8'h83; weight_reg[11:8] <= 4'hB;end
+											  4'b0011 : begin disp1 <= 8'h83; weight_reg[7:4] <= 4'hB;end
+											  4'b0100 : begin disp0 <= 8'h83; weight_reg[3:0] <= 4'hB;end
+											  endcase
+											  end
+								16'hBFFF : begin 
+											  case(counter)
+											  4'b0001 : begin disp3 <= 8'hC6; weight_reg[15:12] <= 4'hC;end
+											  4'b0010 : begin disp2 <= 8'hC6; weight_reg[11:8] <= 4'hC;end
+											  4'b0011 : begin disp1 <= 8'hC6; weight_reg[7:4] <= 4'hC;end
+											  4'b0100 : begin disp0 <= 8'hC6; weight_reg[3:0] <= 4'hC;end
+											  endcase
+											  end
+								16'h7FFF : begin 
+											  case(counter)
+											  4'b0001 : begin disp3 <= 8'hA1; weight_reg[15:12] <= 4'hD;end
+											  4'b0010 : begin disp2 <= 8'hA1; weight_reg[11:8] <= 4'hD;end
+											  4'b0011 : begin disp1 <= 8'hA1; weight_reg[7:4] <= 4'hD;end
+											  4'b0100 : begin disp0 <= 8'hA1; weight_reg[3:0] <= 4'hD;end
+											  endcase
+											  end
+							   default  : disp0 <= 8'h00; 
+							endcase
+							end
+							
+							Data<=16'h0000;
+							State <= WaitForRead;
+							end
+					else
+						State <= Scan;
+			end
+			WaitForRead: begin
+				led<=9'b00001000;
+					if(counter==3'd4 && inputno==2'd0)
+							begin
+							counter<=3'd0;
+							dataIn_a <= data_reg;
+							Addr_a <= Addr_a+3'd1;
+							if(in1count==4'd7)
+							begin
+							State <= WaitForButton;
+							inputno=2'd1;
+							end
+							else State<=Scan;
+							in1count<=in1count+4'd1;
+							end
+					else if(counter==3'd4 && inputno==2'd1)
+							begin
+							counter<=3'd0;
+							dataIn_b <= weight_reg;
+							Addr_b <= Addr_b+3'd1;
+							if(in2count==4'd7)
+							begin
+							State <= WaitForButton;
+							inputno=2'd2;
+							end
+							else State<=Scan;
+							in2count=in2count+4'd1;
+							end
+					else if (KeyRd ==0) begin
+					State<=Scan;
+					end
+				
+			end
+			WaitForButton: begin
+				led<=9'b00010000;
+			end
+			
+		   Multiply_Init: begin
+			   led<=9'b00110000;
+				showoutput=0;
+				We_a  = 1'b0;
+				Oe_a  = 1'b1;
+				We_b  = 1'b0;
+				Oe_b = 1'b1;
+			   Addr_a  = 3'b001;
+				Addr_b  = 3'b001;
+				State <= Multiply;
+				//State <= display;
+			   end
+			
+			Multiply : begin
+			   Cs_a <= 1'b1;
+				Cs_b <= 1'b1;
+				led<=9'b100000000;
+				inp1<=dataOut_a;
+				inp2<=dataOut_b;
+				multi_outq<=out;  //STAGE 1 Pipilining - extra FF multi_out used
+				State <= Add;
+				end
+				
+			Add : begin
+				led<=9'b010000000;
+				add1<=multi_outq;
+				add2<=acc;
+				add_outq<=add_out;
+				State <= Acc;
+				end
+			
+			Acc : begin
+				led<=9'b001000000;
+				acc<=add_outq;   //STAGE 2 Pipilining - extra FF multi_out used
+				input_count<=input_count+1;
+				if (input_count==7)begin
+				State <=display;end
+				else begin
+				Addr_a=Addr_a+3'd1;
+				Addr_b=Addr_b+3'd1;
+				State <= Multiply;end
+				end
+				
+			display : begin
+			showoutput=1;
+				led<=9'b001000111;
+				//display_input<=dataOut_a;
+				disp3<=d3;
+				disp2<=d2;
+				disp1<=d1;
+				disp0<=d0;
+				State <= display;
+			end
+	
+			default: begin 
+				//State <= Scan;
+				led<=9'b01100000;
+				Col <= 4'b1110;
+				KeyRdy <= 1;
+				seg <= 4'b1111;
+				Data <= 16'hFFFF;
+				Sum <= 0;
+				disp0 <= 8'hFF;
+				disp1 <= 8'hFF;
+				disp2 <= 8'hFF;
+				disp3 <= 8'hFF;
+			end
+		endcase
+	end
+	end
+
+	always @(showoutput,done)begin
+	if((showoutput==1)&&(done==1)) begin
+	display_input<=acc;
+	end
+end
+	
+endmodule

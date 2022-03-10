@@ -1,0 +1,58 @@
+#include <LiquidCrystal.h>
+
+// initialize the library by associating any needed LCD interface pin
+// with the arduino pin number it is connected to
+const int rs = 12, en = 11, d4 = 5, d5 = 4, d6 = 3, d7 = 2;
+LiquidCrystal lcd(rs, en, d4, d5, d6, d7);
+  int oldValue1=1;
+  int oldValue2=1;
+void setup() {
+  // set up the LCD's number of columns and rows:
+  lcd.clear();
+  pinMode(8,INPUT);
+  pinMode(9,INPUT);
+  lcd.begin(16, 2);
+  // Print a message to the LCD.
+  lcd.display();
+
+}
+
+void loop() {
+ 
+ if((oldValue1!=digitalRead(8))||(oldValue2!=digitalRead(9)))
+ {
+  lcd.clear();
+  displayNumFunction();
+  oldValue1 = digitalRead(8);
+  oldValue2 = digitalRead(9);
+  }
+  }
+
+  void displayNumFunction()
+   {
+    if((digitalRead(8)==0)&&(digitalRead(9)==0))
+  {
+     lcd.setCursor(0,0);
+     lcd.print("Reset");
+     lcd.display();
+    }
+   else if((digitalRead(8)==0)&&(digitalRead(9)==1))
+  {
+     lcd.setCursor(0,0);
+     lcd.print("SRAM A");
+     lcd.display();
+    }
+    else if((digitalRead(8)==1)&&(digitalRead(9)==0))
+  {
+    lcd.setCursor(0,0);
+     lcd.print("SRAM B");
+     lcd.display();
+    }
+    else if((digitalRead(8)==1)&&(digitalRead(9)==1))
+  {
+     lcd.setCursor(0,0);
+     lcd.print("Result");
+     lcd.display();
+    }
+    else{}
+    }
